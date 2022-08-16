@@ -1,5 +1,4 @@
 import net.minecraftforge.gradle.userdev.tasks.JarJar
-import org.jetbrains.kotlin.utils.addToStdlib.cast
 
 val kotlin_version: String by project
 val annotations_version: String by project
@@ -17,20 +16,13 @@ plugins {
     `maven-publish`
 }
 
-java.toolchain.languageVersion.set(JavaLanguageVersion.of(17))
-kotlin.jvmToolchain {}
+java {
+    toolchain.languageVersion.set(JavaLanguageVersion.of(17))
+    withSourcesJar()
+}
 
 // Enable JarInJar
 jarJar.enable()
-
-val kotlinSourceJar by tasks.creating(Jar::class) {
-    val kotlinSourceSet = kotlin.sourceSets.main.get()
-
-    from(kotlinSourceSet.kotlin.srcDirs)
-    archiveClassifier.set("sources")
-}
-
-tasks.build.get().dependsOn(kotlinSourceJar)
 
 // Workaround to remove build\java from MOD_CLASSES because SJH doesn't like nonexistent dirs
 for (s in arrayOf(sourceSets.main, sourceSets.test)) {
@@ -45,16 +37,16 @@ for (s in arrayOf(sourceSets.main, sourceSets.test)) {
     mutClassesDirs.setFrom(mutClassesFrom)
 }
 
+val library: Configuration by configurations.creating
+
 configurations {
-    val library = maybeCreate("library")
-    api.configure {
+    api {
         extendsFrom(library)
     }
-}
-minecraft.runs.all {
-    lazyToken("minecraft_classpath") {
-        return@lazyToken configurations["library"].copyRecursive().resolve()
-            .joinToString(File.pathSeparator) { it.absolutePath }
+    
+    // Remove Minecraft from transitive maven dependencies
+    runtimeElements {
+        exclude(group = "net.minecraftforge", module = "forge")
     }
 }
 
@@ -67,8 +59,6 @@ repositories {
 dependencies {
     minecraft("net.minecraftforge:forge:1.19-41.0.91")
 
-    val library = configurations["library"]
-
     fun include(group: String, name: String, version: String) {
         library(group = group, name = name, version = version) {
             exclude(group = "org.jetbrains", module = "annotations")
@@ -76,19 +66,19 @@ dependencies {
         }
     }
 
-    include("org.jetbrains.kotlin", "kotlin-stdlib-jdk8", kotlin_version, )
-    include("org.jetbrains.kotlin", "kotlin-reflect", kotlin_version, )
-    include("org.jetbrains.kotlinx", "kotlinx-coroutines-core", coroutines_version, )
-    include("org.jetbrains.kotlinx", "kotlinx-coroutines-core-jvm", coroutines_version, )
-    include("org.jetbrains.kotlinx", "kotlinx-coroutines-jdk8", coroutines_version, )
-    include("org.jetbrains.kotlinx", "kotlinx-serialization-json", serialization_version, )
+    include("org.jetbrains.kotlin", "kotlin-stdlib-jdk8", kotlin_version)
+    include("org.jetbrains.kotlin", "kotlin-reflect", kotlin_version)
+    include("org.jetbrains.kotlinx", "kotlinx-coroutines-core", coroutines_version)
+    include("org.jetbrains.kotlinx", "kotlinx-coroutines-core-jvm", coroutines_version)
+    include("org.jetbrains.kotlinx", "kotlinx-coroutines-jdk8", coroutines_version)
+    include("org.jetbrains.kotlinx", "kotlinx-serialization-json", serialization_version)
     include("org.jetbrains.kotlin", "kotlin-stdlib-jdk7", kotlin_version)
     include("org.jetbrains.kotlinx", "kotlinx-serialization-core", serialization_version)
     include("org.jetbrains.kotlin", "kotlin-stdlib", kotlin_version)
     include("org.jetbrains.kotlin", "kotlin-stdlib-common", kotlin_version)
 }
 
-minecraft.run {
+minecraft {
     mappings("official", "1.19")
 
     runs {
@@ -125,57 +115,50 @@ minecraft.run {
                 }
             }
         }
+        
+        all {
+            lazyToken("minecraft_classpath") {
+                library.copyRecursive().resolve()
+                    .joinToString(separator = File.pathSeparator, transform = File::getAbsolutePath)
+            }
+        }
     }
 }
 
-tasks.withType<Jar> {
-    manifest {
-        attributes(
-            mapOf(
-                "FMLModType" to "LANGPROVIDER",
-                "Specification-Title" to "Kotlin for Forge",
-                "Automatic-Module-Name" to "kfflang",
-                "Specification-Vendor" to "Forge",
-                "Specification-Version" to "1",
-                "Implementation-Title" to project.name,
-                "Implementation-Version" to "${project.version}",
-                "Implementation-Vendor" to "thedarkcolour",
-                "Implementation-Timestamp" to `java.text`.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssZ")
-                    .format(`java.util`.Date())
+tasks {
+    withType<Jar> {
+        manifest {
+            attributes(
+                mapOf(
+                    "FMLModType" to "LANGPROVIDER",
+                    "Specification-Title" to "Kotlin for Forge",
+                    "Automatic-Module-Name" to "kfflang",
+                    "Specification-Vendor" to "Forge",
+                    "Specification-Version" to "1",
+                    "Implementation-Title" to project.name,
+                    "Implementation-Version" to "${project.version}",
+                    "Implementation-Vendor" to "thedarkcolour",
+                    "Implementation-Timestamp" to `java.text`.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssZ")
+                        .format(`java.util`.Date())
+                )
             )
-        )
+        }
+    }
+    
+    withType<JarJar> {
+        archiveClassifier.set("obf")
+    }
+    
+    // Only require the lang provider to use explicit visibility modifiers, not the test mod
+    compileKotlin {
+        kotlinOptions.freeCompilerArgs = listOf("-Xexplicit-api=warning", "-Xjvm-default=all")
     }
 }
-
-tasks.withType<JarJar> {
-    archiveClassifier.set("obf")
-}
-
-// Only require the lang provider to use explicit visibility modifiers, not the test mod
-tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().getByName("compileKotlin") {
-    kotlinOptions.freeCompilerArgs = listOf("-Xexplicit-api=warning", "-Xjvm-default=all")
-}
-
-fun DependencyHandler.minecraft(
-    dependencyNotation: Any
-): Dependency? = add("minecraft", dependencyNotation)
-
-fun DependencyHandler.library(
-    dependencyNotation: Any
-): Dependency? = add("library", dependencyNotation)
 
 publishing {
     publications {
         create<MavenPublication>("maven") {
-            from(components["kotlin"])
-            artifact(kotlinSourceJar)
-
-            // Remove Minecraft from transitive dependencies
-            pom.withXml {
-                asNode().get("dependencies").cast<groovy.util.NodeList>().first().cast<groovy.util.Node>().children().cast<MutableList<groovy.util.Node>>().removeAll { child ->
-                    child.get("groupId").cast<groovy.util.NodeList>().first().cast<groovy.util.Node>().value() == "net.minecraftforge"
-                }
-            }
+            from(components["java"])
         }
     }
 }

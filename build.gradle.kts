@@ -1,3 +1,4 @@
+import net.minecraftforge.gradle.userdev.tasks.JarJar
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 
 plugins {
@@ -27,7 +28,6 @@ allprojects {
 }
 
 java.toolchain.languageVersion.set(JavaLanguageVersion.of(17))
-kotlin.jvmToolchain {}
 jarJar.enable()
 
 repositories {
@@ -35,20 +35,15 @@ repositories {
     mavenLocal()
 }
 
+val library: Configuration by configurations.creating
+
 configurations {
-    val library = maybeCreate("library")
     api.configure {
         extendsFrom(library)
     }
 }
-minecraft.runs.all {
-    lazyToken("minecraft_classpath") {
-        return@lazyToken configurations["library"].copyRecursive().resolve()
-            .joinToString(File.pathSeparator) { it.absolutePath }
-    }
-}
 
-minecraft.run {
+minecraft {
     mappings("official", mc_version)
 
     runs {
@@ -77,6 +72,13 @@ minecraft.run {
                 }
             }
         }
+        
+        all {
+            lazyToken("minecraft_classpath") {
+                library.copyRecursive().resolve()
+                    .joinToString(separator = File.pathSeparator, transform = File::getAbsolutePath)
+            }
+        }
     }
 }
 
@@ -97,39 +99,36 @@ dependencies {
     include("org.jetbrains.kotlin", "kotlin-stdlib-common", kotlin_version, max_kotlin, true)
 
     // KFF Modules
-    include("thedarkcolour", "kfflib", "${project.version}", "4.0", false)
-    include("thedarkcolour", "kfflang", "${project.version}", "4.0", false)
-}
-configurations.all {
-    resolutionStrategy.dependencySubstitution {
-        substitute(module("thedarkcolour:kfflib")).using(project(":kfflib"))
-        substitute(module("thedarkcolour:kfflang")).using(project(":kfflang"))
-    }
+    include(project(":kfflib"), "4.0")
+    include(project(":kfflang"), "4.0")
 }
 
 // Adds to JarJar without using as Gradle dependency
 fun DependencyHandlerScope.include(group: String, name: String, version: String, maxVersion: String, isLibrary: Boolean = true) {
     val lib = if (isLibrary) {
-        configurations["library"](group = group, name = name, "[$version, $maxVersion)")
+        library(group = group, name = name, "[$version, $maxVersion)")
     } else {
         implementation(group, name, "[$version, $maxVersion)")
     }
-    jarJar(lib) {
+    include(lib)
+}
+
+fun DependencyHandlerScope.include(dependency: ModuleDependency, maxVersion: String? = null) {
+    jarJar(dependency) {
         isTransitive = false
         jarJar.pin(this, version)
+        if (maxVersion != null) jarJar.ranged(this, "[$version,$maxVersion)")
     }
 }
 
-// Sets final jar name to match old name
-tasks.withType<net.minecraftforge.gradle.userdev.tasks.JarJar> {
-    archiveBaseName.set("kotlinforforge")
-    archiveClassifier.set("obf")
-}
-val compileKotlin: KotlinCompile by tasks
-compileKotlin.kotlinOptions {
-    jvmTarget = "1.8"
-}
-val compileTestKotlin: KotlinCompile by tasks
-compileTestKotlin.kotlinOptions {
-    jvmTarget = "1.8"
+tasks {
+    // Sets final jar name to match old name
+    withType<JarJar> {
+        archiveBaseName.set("kotlinforforge")
+        archiveClassifier.set("obf")
+    }
+
+    withType<KotlinCompile> {
+        kotlinOptions.jvmTarget = "1.8"
+    }
 }
