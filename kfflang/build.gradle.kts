@@ -44,9 +44,15 @@ configurations {
         extendsFrom(library)
     }
     
-    // Remove Minecraft from transitive maven dependencies
     runtimeElements {
+        // Remove Minecraft from transitive maven dependencies
         exclude(group = "net.minecraftforge", module = "forge")
+        
+        // Include obf jar in the final JarJar
+        outgoing { 
+            artifacts.clear()
+            artifact(tasks.jarJar)
+        }
     }
 }
 
